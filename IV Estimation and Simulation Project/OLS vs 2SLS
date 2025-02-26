@@ -1,1 +1,181 @@
+# Install and load required packages
+install.packages("AER")
+install.packages("tidyverse")
+install.packages("mvtnorm")
+install.packages("stargazer")
+install.packages("jtools")
+install.packages("corrplot")
+
+
+library(tidyverse)
+library(AER) # for IVreg function
+library(mvtnorm) # Used to simulate data
+library(stargazer) # visualizing multiple models
+library(jtools) # visualizing model estimates
+
+
+# Set theme for ggplot2
+theme_set(
+  theme_bw() +
+    theme(
+      legend.title = element_blank(),
+      legend.position = c(.15, 0.85),
+      axis.title = element_text(vjust = 0.5)
+    )
+)
+
+
+# Question 1: Simulation of the data generating process
+set.seed(33659116) # random seed
+n <- 1000 # population size
+
+
+# Variance-covariance matrix of the structural errors "u"
+sigma.matrix <- as.matrix(rbind(
+  c(4, 2),
+  c(2, 3)
+)) 
+
+
+# Generate structural errors "u" from a multivariate normal distribution
+u <- rmvnorm(n, sigma = sigma.matrix)
+
+
+# Generate exogenous variable "z"
+z <- rnorm(n, mean = 0, sd = 1)
+
+
+# Generate endogenous variable "X"
+X <- 1 + z + I(z^2) + u[, 1] # Ensure X is positive
+
+
+# Generate dependent variable "y"
+y <- exp(log(X) + u[, 2])
+
+
+# Create data frame
+df <- data.frame(y, X, z)
+
+
+# Check the structure of df
+str(df)
+
+
+# Question 2: Naive OLS (no IVs)
+ols <- lm(log(y) ~ log(X) + log(z), df)
+summary(ols)
+
+
+# Testing for biased and consistent estimators
+set.seed(33659116)
+curve <- tibble(
+  est1 = replicate(100, mean(sample(ols$residuals, size = 5))),
+  est2 = replicate(100, mean(sample(ols$residuals, size = 25)))
+)
+
+curve |>
+  ggplot() +
+  geom_density(aes(x = est1, color = "Estimator 1")) +
+  geom_density(aes(x = est2, color = "Estimator 2")) +
+  geom_vline(xintercept = 0) +
+  labs(
+    title = "OLS estimators consistency",
+    x = "Estimators"
+  )
+
+
+# Residual plots
+ols_df <- tibble(
+  Residuals = ols$residuals,
+  fitted.values = ols$fitted.values
+)
+
+ols_df |>
+  ggplot(aes(y = Residuals, x = fitted.values)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Residual vs Fitted scatterplot")
+
+
+# Question 3: 2SLS with IVs
+m2sls.iv <- ivreg(log(y) ~ log(X) | z, data = df)
+summary(m2sls.iv)
+
+
+# HAC standard errors and p-values for the estimators
+coeftest(m2sls.iv, vcov = vcovHAC(m2sls.iv))
+
+
+# Testing for biased and consistent estimators
+curve <- tibble(
+  est1 = replicate(100, mean(sample(m2sls.iv$residuals, size = 5))),
+  est2 = replicate(100, mean(sample(m2sls.iv$residuals, size = 25)))
+)
+
+
+curve |>
+  ggplot() +
+  geom_density(aes(x = est1, color = "Estimator 1")) +
+  geom_density(aes(x = est2, color = "Estimator 2")) +
+  geom_vline(xintercept = 0) +
+  labs(
+    title = "2SLS Estimators Consistency",
+    x = "Estimators"
+  )
+
+
+# Residual plots
+m2sls.iv_df <- tibble(
+  Residuals = m2sls.iv$residuals,
+  fitted.values = m2sls.iv$fitted.values
+)
+
+m2sls.iv_df |>
+  ggplot(aes(y = Residuals, x = fitted.values)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  labs(title = "Residual vs Fitted scatterplot")
+
+
+# Question 4: Joint plot of the estimators
+
+
+# Ensure X and z are positive
+df$X <- abs(df$X) + 1  # Add 1 to avoid log(0)
+df$z <- abs(df$z) + 1  # Add 1 to avoid log(0)
+
+
+# Refit the OLS model
+ols <- lm(log(y) ~ log(X) + log(z), data = df)
+
+
+# Add OLS fitted values to df
+df$ols <- NA
+df$ols[as.numeric(names(ols$fitted.values))] <- ols$fitted.values
+
+
+# Refit the 2SLS model
+m2sls.iv <- ivreg(log(y) ~ log(X) | z, data = df)
+
+
+# Add 2SLS fitted values to df
+df$m2sls.iv <- NA
+df$m2sls.iv[as.numeric(names(m2sls.iv$fitted.values))] <- m2sls.iv$fitted.values
+
+
+# Create the joint plot
+df |>
+  ggplot(aes(x = log(X), y = log(y))) +
+  geom_point(alpha = 0.6) + # Scatter plot of the original data
+  geom_smooth(aes(color = "Original"), se = FALSE, method = "lm") + # Original relationship
+  geom_smooth(aes(y = ols, color = "OLS"), se = FALSE, method = "lm") + # OLS fitted values
+  geom_smooth(aes(y = m2sls.iv, color = "2SLS"), se = FALSE, method = "lm") + # 2SLS fitted values
+  labs(
+    title = "Joint Plot of the Estimators",
+    x = "log(X)",
+    y = "log(y)",
+    color = "Model"
+  ) +
+  theme_minimal() +
+  scale_color_manual(values = c("Original" = "black", "OLS" = "blue", "2SLS" = "red"))
 
